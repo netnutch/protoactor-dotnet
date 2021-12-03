@@ -50,6 +50,8 @@ namespace Proto.Cluster.Partition
             }
             else
             {
+
+                
                 var partitionActorProps = Props
                     .FromProducer(() => new PartitionIdentityActor(_cluster, _identityHandoverTimeout, _config))
                     .WithGuardianSupervisorStrategy(Supervision.AlwaysRestartStrategy);

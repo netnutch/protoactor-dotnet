@@ -28,7 +28,7 @@ namespace Proto.Cluster.Tests
 
     public abstract class ClusterFixture : IAsyncLifetime, IClusterFixture
     {
-        protected readonly string _clusterName;
+        protected readonly string ClusterName;
         private readonly int _clusterSize;
         private readonly Func<ClusterConfig, ClusterConfig> _configure;
         private readonly ILogger _logger = Log.CreateLogger(nameof(GetType));
@@ -37,7 +37,7 @@ namespace Proto.Cluster.Tests
         {
             _clusterSize = clusterSize;
             _configure = configure;
-            _clusterName = $"test-cluster-{Guid.NewGuid().ToString().Substring(0, 6)}";
+            ClusterName = $"test-cluster-{Guid.NewGuid().ToString().Substring(0, 6)}";
         }
 
         protected virtual ClusterKind[] ClusterKinds => new[]
@@ -99,9 +99,9 @@ namespace Proto.Cluster.Tests
         protected virtual async Task<Cluster> SpawnClusterMember(Func<ClusterConfig, ClusterConfig> configure)
         {
             var config = ClusterConfig.Setup(
-                    _clusterName,
+                    ClusterName,
                     GetClusterProvider(),
-                    GetIdentityLookup(_clusterName)
+                    GetIdentityLookup(ClusterName)
                 )
                 .WithClusterKinds(ClusterKinds);
 
@@ -127,7 +127,7 @@ namespace Proto.Cluster.Tests
 
         protected abstract IClusterProvider GetClusterProvider();
 
-        protected virtual IIdentityLookup GetIdentityLookup(string clusterName) => new PartitionIdentityLookup();
+        protected virtual IIdentityLookup GetIdentityLookup(string clusterName) => new PartitionIdentityLookup(TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(2), new PartitionConfig(true, 1000));
     }
 
     public abstract class BaseInMemoryClusterFixture : ClusterFixture

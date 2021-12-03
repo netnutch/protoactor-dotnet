@@ -5,14 +5,13 @@
 // -----------------------------------------------------------------------
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
 namespace Proto.Cluster.Partition
 {
-    class PartitionPlacementActor : IActor
+    class PartitionPlacementActor : IActor, IDisposable
     {
         private readonly Cluster _cluster;
         private static readonly ILogger Logger = Log.CreateLogger<PartitionPlacementActor>();
@@ -21,6 +20,7 @@ namespace Proto.Cluster.Partition
         //kind -> the actor kind
         private readonly Dictionary<ClusterIdentity, PID> _myActors = new();
         private readonly PartitionConfig _config;
+        private EventStreamSubscription<object>? _subscription;
 
         public PartitionPlacementActor(Cluster cluster, PartitionConfig config)
         {
@@ -31,21 +31,39 @@ namespace Proto.Cluster.Partition
         public Task ReceiveAsync(IContext context) =>
             context.Message switch
             {
-                Terminated msg              => Terminated(msg),
+                Started                     => OnStarted(context),
+                ActivationTerminating msg   => ActivationTerminating(msg),
                 IdentityHandoverRequest msg => IdentityHandoverRequest(context, msg),
                 ActivationRequest msg       => ActivationRequest(context, msg),
                 _                           => Task.CompletedTask
             };
 
-        private Task Terminated(Terminated msg)
+        private Task OnStarted(IContext context)
         {
-            //TODO: if this turns out to be perf intensive, lets look at optimizations for reverse lookups
-            var (clusterIdentity, pid) = _myActors.FirstOrDefault(kvp => kvp.Value.Equals(msg.Who));
+            _subscription = context.System.EventStream.Subscribe<ActivationTerminating>(e => context.Send(context.Self, e));
+            return Task.CompletedTask;
+        }
+
+        private Task ActivationTerminating(ActivationTerminating msg)
+        {
+            if (!_myActors.TryGetValue(msg.ClusterIdentity, out var pid))
+            {
+                Logger.LogWarning("Activation not found: {ActivationTerminating}", msg);
+                return Task.CompletedTask;
+            }
+
+            if (!pid.Equals(msg.Pid))
+            {
+                Logger.LogWarning("Activation did not match pid: {ActivationTerminating}, {Pid}", msg, pid);
+                return Task.CompletedTask;
+            }
+
+            _myActors.Remove(msg.ClusterIdentity);
 
             var activationTerminated = new ActivationTerminated
             {
                 Pid = pid,
-                ClusterIdentity = clusterIdentity,
+                ClusterIdentity = msg.ClusterIdentity,
             };
 
             _cluster.MemberList.BroadcastEvent(activationTerminated);
@@ -54,7 +72,6 @@ namespace Proto.Cluster.Partition
             // var ownerPid = PartitionManager.RemotePartitionIdentityActor(ownerAddress);
             //
             // context.Send(ownerPid, activationTerminated);
-            _myActors.Remove(clusterIdentity);
             return Task.CompletedTask;
         }
 
@@ -92,22 +109,25 @@ namespace Proto.Cluster.Partition
                     var actor = new Activation {ClusterIdentity = clusterIdentity, Pid = pid};
                     response.Actors.Add(actor);
                     count++;
-                    
+
                     if (count % chunkSize == 0)
                     {
                         if (cancelRebalance.IsCancellationRequested)
                         {
                             return Task.CompletedTask;
                         }
+
                         response.ChunkId = chunkId++;
                         context.Request(context.Sender, response, outOfBandResponseHandler);
                         response = new IdentityHandoverResponse();
                     }
                 }
+
                 if (cancelRebalance.IsCancellationRequested)
                 {
                     return Task.CompletedTask;
                 }
+
                 response.ChunkId = chunkId;
                 response.Final = true;
 
@@ -121,8 +141,10 @@ namespace Proto.Cluster.Partition
                 {
                     Logger.LogInformation("Cancelled rebalance: {@IdentityHandoverRequest}", msg);
                 }
+
                 context.Stop(outOfBandResponseHandler);
             }
+
             return Task.CompletedTask;
         }
 
@@ -190,5 +212,7 @@ namespace Proto.Cluster.Partition
 
             return Task.CompletedTask;
         }
+
+        public void Dispose() => _subscription?.Unsubscribe();
     }
 }
