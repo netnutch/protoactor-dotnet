@@ -15,12 +15,16 @@ public class OpenTelemetryTracingTests : IClassFixture<ActivityFixture>
     private static readonly Props ProxyTraceActorProps = Props.FromProducer(() => new TraceTestActor()).WithTracing();
 
     private static readonly Props InnerTraceActorProps = Props.FromFunc(context => {
-            Activity.Current?.SetTag("inner", "true");
-
-            if (context.Sender is not null)
+            if (context.Message is TraceMe)
             {
-                context.Respond(new TraceResponse());
+                Activity.Current?.SetTag("inner", "true");
+
+                if (context.Sender is not null)
+                {
+                    context.Respond(new TraceResponse());
+                }
             }
+            
 
             return Task.CompletedTask;
         }
@@ -124,7 +128,7 @@ public class OpenTelemetryTracingTests : IClassFixture<ActivityFixture>
 
         var receiveActivity = _fixture
             .GetActivitiesByTraceId(activityTraceId)
-            .Single(it => it.OperationName.Equals("Receive TraceMe", StringComparison.Ordinal));
+            .Single(it => it.OperationName.Equals("Proto.Receive TraceMe", StringComparison.Ordinal));
 
         receiveActivity.GetStatus().Should().Be(Status.Error);
         receiveActivity.Events.Should().HaveCount(1);
@@ -158,8 +162,6 @@ public class OpenTelemetryTracingTests : IClassFixture<ActivityFixture>
 
         private async Task OnTraceMe(IContext context, TraceMe msg)
         {
-            Activity.Current?.SetTag("inner", "true");
-
             var target = GetChild(context);
 
             switch (msg.Method)
