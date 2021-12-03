@@ -95,5 +95,7 @@ namespace Proto.Router
             .Select(a => (_hash(a.hashKey), a.node))
             .OrderBy(t => t.Item1)
             .ToArray();
+
+        public int Count => _ring.Length / _replicaCount;
     }
 }

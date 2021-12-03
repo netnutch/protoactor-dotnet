@@ -81,7 +81,7 @@ namespace Proto.Cluster
                 // ReSharper disable once MethodSupportsCancellation
                 await Task.WhenAny(t, Task.Delay(500));
                 if (t.IsCompleted)
-                    return true;                
+                    return true;
             }
 
             return false;
