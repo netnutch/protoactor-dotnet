@@ -14,38 +14,47 @@ namespace Proto.Cluster.Partition
     /// <summary>
     /// Used by partitionIdentityActor to update partition lookup on topology changes.
     /// </summary>
-    class PartitionIdentityRelocationWorker : IActor
+    class PartitionIdentityRebalanceWorker : IActor
     {
         private static readonly ILogger Logger = Log.CreateLogger<PartitionIdentityActor>();
 
         private readonly Dictionary<ClusterIdentity, PID> _partitionLookup;
         private readonly TaskCompletionSource<bool> _onRelocationComplete = new();
-        private readonly Dictionary<PID, MemberRequestState> _waitingRequests = new();
+        private readonly Dictionary<string, MemberRequestState> _waitingRequests = new();
         private int _totalReceived;
+        private ulong _topologyHash;
         private readonly Stopwatch _timer = new();
 
-        public PartitionIdentityRelocationWorker(Dictionary<ClusterIdentity, PID> partitionLookup) => _partitionLookup = partitionLookup;
+        public PartitionIdentityRebalanceWorker(int guesstimatedActivationCount)
+            => _partitionLookup = new Dictionary<ClusterIdentity, PID>(guesstimatedActivationCount);
 
         public Task ReceiveAsync(IContext context) => context.Message switch
         {
             IdentityHandoverRequest request   => OnIdentityHandoverRequest(request, context),
+            IdentityHandoverCancellation      => CancelHandover(context),
             IdentityHandoverResponse response => OnIdentityHandoverResponse(response, context),
             DeadLetterResponse response       => OnDeadLetterResponse(response),
             ReceiveTimeout                    => OnReceiveTimeout(),
             _                                 => Task.CompletedTask
         };
 
+        private static Task CancelHandover(IContext context)
+        {
+            context.Stop(context.Self);
+            return Task.CompletedTask;
+        }
+
         private Task OnReceiveTimeout()
         {
             // TODO: Retry strategy
-            Logger.LogError("Relocation timed out");
+            Logger.LogError("Relocation timout");
             _onRelocationComplete.TrySetResult(false);
             return Task.CompletedTask;
         }
 
         private Task OnDeadLetterResponse(DeadLetterResponse response)
         {
-            if (_waitingRequests.Remove(response.Target))
+            if (_waitingRequests.Remove(response.Target.Address))
             {
                 Logger.LogError("Unreachable node: {Address}", response.Target.Address);
                 TryCompleteRelocation();
@@ -77,7 +86,7 @@ namespace Proto.Cluster.Partition
 
         private void TryCompleteRelocation(IdentityHandoverResponse response, PID sender)
         {
-            if (!_waitingRequests.TryGetValue(sender, out var requestState))
+            if (!_waitingRequests.TryGetValue(sender.Address, out var requestState))
             {
                 Logger.LogWarning("Received unexpected IdentityHandoverResponse from {Sender}, chunk {ChunkId} with {ActorCount} actors", sender,
                     response.ChunkId, response.Actors.Count
@@ -89,7 +98,7 @@ namespace Proto.Cluster.Partition
 
             if (requestState.TryComplete(response))
             {
-                _waitingRequests.Remove(sender!);
+                _waitingRequests.Remove(sender.Address!);
                 Logger.LogDebug("Received ownership of {Count} actors from {MemberAddress}", requestState.ReceivedActors, sender.Address);
 
                 TryCompleteRelocation();
@@ -108,21 +117,18 @@ namespace Proto.Cluster.Partition
         private Task OnIdentityHandoverRequest(IdentityHandoverRequest request, IContext context)
         {
             _timer.Start();
+            _topologyHash = request.TopologyHash;
             context.SetReceiveTimeout(TimeSpan.FromSeconds(5));
 
             foreach (var member in request.Members)
             {
                 var activatorPid = PartitionManager.RemotePartitionPlacementActor(member.Address);
                 context.Request(activatorPid, request);
-                _waitingRequests[activatorPid] = new MemberRequestState();
+                _waitingRequests[activatorPid.Address] = new MemberRequestState();
             }
 
             context.ReenterAfter(_onRelocationComplete.Task, task => {
-                    context.Respond(new IdentityHandoverAcknowledgement
-                        {
-                            Count = _totalReceived
-                        }
-                    );
+                    context.Respond(new PartitionsRebalanced(_partitionLookup, _topologyHash));
                     context.Self.Stop(context.System);
                     return Task.CompletedTask;
                 }
@@ -135,7 +141,7 @@ namespace Proto.Cluster.Partition
             if (_partitionLookup.TryGetValue(msg.ClusterIdentity, out var existing))
             {
                 //these are the same, that's good, just ignore message
-                if (existing.Address == msg.Pid.Address) return;
+                if (existing.Address == msg.Pid.Address && existing.Id == msg.Pid.Id) return;
             }
 
             // Logger.LogDebug("Taking Ownership of: {Identity}, pid: {Pid}", msg.Identity, msg.Pid);
