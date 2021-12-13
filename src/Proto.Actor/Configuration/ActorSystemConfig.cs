@@ -5,7 +5,6 @@
 // -----------------------------------------------------------------------
 using System;
 using System.Diagnostics;
-using System.Threading;
 using JetBrains.Annotations;
 using Microsoft.Extensions.Logging;
 using Ubiquitous.Metrics;

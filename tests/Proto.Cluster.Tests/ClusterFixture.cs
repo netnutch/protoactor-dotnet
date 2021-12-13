@@ -9,6 +9,7 @@ using Proto.Cluster.Identity;
 using Proto.Cluster.Partition;
 using Proto.Cluster.Testing;
 using Proto.Logging;
+using Proto.OpenTracing;
 using Proto.Remote;
 using Proto.Remote.GrpcCore;
 using Xunit;
@@ -123,11 +124,11 @@ namespace Proto.Cluster.Tests
             return cluster;
         }
 
-        protected virtual ActorSystemConfig GetActorSystemConfig() => ActorSystemConfig.Setup();
+        protected virtual ActorSystemConfig GetActorSystemConfig() => ActorSystemConfig.Setup().WithConfigureProps(props => props.WithOpenTracing());
 
         protected abstract IClusterProvider GetClusterProvider();
 
-        protected virtual IIdentityLookup GetIdentityLookup(string clusterName) => new PartitionIdentityLookup(TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(2), new PartitionConfig(true, 1000));
+        protected virtual IIdentityLookup GetIdentityLookup(string clusterName) => new PartitionIdentityLookup(TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(2), new PartitionConfig(true, 1000, TimeSpan.FromSeconds(1)));
     }
 
     public abstract class BaseInMemoryClusterFixture : ClusterFixture

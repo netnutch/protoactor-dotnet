@@ -9,7 +9,6 @@ using System.Collections.Immutable;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using Proto.Utils;
 
 namespace Proto.Cluster.Partition
 {
@@ -49,8 +48,9 @@ namespace Proto.Cluster.Partition
         public Task ReceiveAsync(IContext context) =>
             context.Message switch
             {
-                Started                  => OnStarted(context),
-                ActivationRequest msg    => OnActivationRequest(msg, context),
+                Started               => OnStarted(context),
+                ActivationRequest msg => OnActivationRequest(msg, context),
+
                 ActivationTerminated msg => OnActivationTerminated(msg, context),
                 ClusterTopology msg      => OnClusterTopology(msg, context),
                 _                        => Task.CompletedTask
@@ -64,16 +64,7 @@ namespace Proto.Cluster.Partition
             return Task.CompletedTask;
         }
 
-        private async Task OnClusterTopology(ClusterTopology msg, IContext context)
-        {
-            await Retry.Try(() => OnClusterTopologyInner(msg, context), onError: OnError, onFailed: OnFailed, ignoreFailure: true);
-
-            static void OnError(int attempt, Exception exception) => Logger.LogWarning(exception, "Failed to handle topology change");
-
-            static void OnFailed(Exception exception) => Logger.LogError(exception, "Failed to handle topology change");
-        }
-
-        private Task OnClusterTopologyInner(ClusterTopology msg, IContext context)
+        private Task OnClusterTopology(ClusterTopology msg, IContext context)
         {
             StopInvalidatedTopologyUpdates(msg, context);
 
@@ -90,9 +81,12 @@ namespace Proto.Cluster.Partition
                 return Task.CompletedTask;
             }
 
-            using var cts = new CancellationTokenSource(_identityHandoverTimeout);
+            var cts = new CancellationTokenSource(_identityHandoverTimeout);
             _rebalance ??= new TaskCompletionSource<ulong>();
-            _relocationWorker = context.Spawn(Props.FromProducer(() => new PartitionIdentityRebalanceWorker((int) (existingActivations * 1.10))));
+            _relocationWorker = context.Spawn(Props.FromProducer(()
+                    => new PartitionIdentityRebalanceWorker((int) (existingActivations * 1.10), _config.RebalanceRequestTimeout, cts.Token)
+                )
+            );
 
             Logger.LogDebug("Requesting ownerships");
             var rebalanceTask = context.RequestAsync<PartitionsRebalanced>(_relocationWorker, new IdentityHandoverRequest
@@ -103,10 +97,18 @@ namespace Proto.Cluster.Partition
                 }, cts.Token
             );
 
-            context.ReenterAfter(rebalanceTask, task => {
+            context.ReenterAfter(rebalanceTask, async task => {
                     if (task.IsCompletedSuccessfully)
                     {
-                        OnPartitionsRebalanced(task.Result);
+                        try
+                        {
+                            // Waits until cluster is in consensus before allowing activations to continue
+                            await _cluster.MemberList.TopologyConsensus(CancellationTokens.FromSeconds(5));
+                        }
+                        finally
+                        {
+                            OnPartitionsRebalanced(task.Result, context);
+                        }
                     }
                     else
                     {
@@ -117,14 +119,15 @@ namespace Proto.Cluster.Partition
                         }
                     }
 
-                    return Task.CompletedTask;
+                    cts.Dispose();
+
                 }
             );
 
             return Task.CompletedTask;
         }
 
-        private void OnPartitionsRebalanced(PartitionsRebalanced msg)
+        private void OnPartitionsRebalanced(PartitionsRebalanced msg, IContext context)
         {
             if (msg.TopologyHash != _topologyHash)
             {
@@ -142,8 +145,8 @@ namespace Proto.Cluster.Partition
         {
             if (_relocationWorker is not null && _topologyHash != msg.TopologyHash)
             {
-                context.Send(_relocationWorker, new IdentityHandoverCancellation()
-                );
+                context.Send(_relocationWorker, new IdentityHandoverCancellation());
+                _relocationWorker = null;
             }
         }
 
@@ -167,7 +170,7 @@ namespace Proto.Cluster.Partition
             // Wait for rebalance in progress
             if (_rebalance is not null)
             {
-                context.ReenterAfter(_rebalance.Task, () => OnActivationRequest(msg, context));
+                context.ReenterAfter(_rebalance.Task, _ => OnActivationRequest(msg, context));
                 return Task.CompletedTask;
             }
 
@@ -278,6 +281,7 @@ namespace Proto.Cluster.Partition
                             if (_config.DeveloperLogging)
                                 Console.Write("A"); //activated
                             // What if the topology changed between the request and response?
+
                             _partitionLookup[msg.ClusterIdentity] = response.Pid;
                             _spawns.Remove(msg.ClusterIdentity);
                             context.Respond(response);
