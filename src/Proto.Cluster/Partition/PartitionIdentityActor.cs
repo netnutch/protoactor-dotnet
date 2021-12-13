@@ -25,7 +25,7 @@ namespace Proto.Cluster.Partition
         private static readonly ILogger Logger = Log.CreateLogger<PartitionIdentityActor>();
         private readonly string _myAddress;
 
-        private Dictionary<ClusterIdentity, PID> _partitionLookup = new(); //actor/grain name to PID
+        private readonly Dictionary<ClusterIdentity, PID> _partitionLookup = new(); //actor/grain name to PID
 
         private MemberHashRing _memberHashRing = new(ImmutableList<Member>.Empty);
 
@@ -48,9 +48,8 @@ namespace Proto.Cluster.Partition
         public Task ReceiveAsync(IContext context) =>
             context.Message switch
             {
-                Started               => OnStarted(context),
-                ActivationRequest msg => OnActivationRequest(msg, context),
-
+                Started                  => OnStarted(context),
+                ActivationRequest msg    => OnActivationRequest(msg, context),
                 ActivationTerminated msg => OnActivationTerminated(msg, context),
                 ClusterTopology msg      => OnClusterTopology(msg, context),
                 _                        => Task.CompletedTask
@@ -98,45 +97,61 @@ namespace Proto.Cluster.Partition
             );
 
             context.ReenterAfter(rebalanceTask, async task => {
+
                     if (task.IsCompletedSuccessfully)
                     {
-                        try
-                        {
-                            // Waits until cluster is in consensus before allowing activations to continue
-                            await _cluster.MemberList.TopologyConsensus(CancellationTokens.FromSeconds(5));
-                        }
-                        finally
-                        {
-                            OnPartitionsRebalanced(task.Result, context);
-                        }
+                        Console.WriteLine($"Rebalanced: {msg.TopologyHash} / {_topologyHash}");
+                        await OnPartitionsRebalanced(task.Result, context);
                     }
                     else
                     {
                         if (topologyHash == _topologyHash) // Current topology failed
                         {
+                            Console.WriteLine($"Partition Rebalance failed for: {_topologyHash}");
                             Logger.LogError("Partition Rebalance failed for {TopologyHash}", _topologyHash);
                             // TODO: retry?
                         }
                     }
 
                     cts.Dispose();
-
                 }
             );
 
             return Task.CompletedTask;
         }
 
-        private void OnPartitionsRebalanced(PartitionsRebalanced msg, IContext context)
+        private async Task OnPartitionsRebalanced(PartitionsRebalanced msg, IContext context)
         {
-            if (msg.TopologyHash != _topologyHash)
+            // var (consensus, topologyHash) = await _cluster.MemberList.TopologyConsensus(CancellationTokens.FromSeconds(5));
+            //
+            // while (consensus is false)
+            // {
+            //     Logger.LogWarning("Waiting for consensus to complete partition rebalance");
+            //
+            //     (consensus, topologyHash) = await _cluster.MemberList.TopologyConsensus(CancellationTokens.FromSeconds(5));
+            // }
+
+            // if (msg.TopologyHash != topologyHash)
+            // {
+            //     if (_config.DeveloperLogging)
+            //     {
+            //         Console.WriteLine($"{msg.TopologyHash}!={topologyHash}");
+            //     }
+            //     Logger.LogWarning("Rebalance with outdated TopologyHash {Received} instead of {Current}", msg.TopologyHash, _topologyHash);
+            //     return;
+            // }
+            if (_config.DeveloperLogging)
             {
-                Logger.LogWarning("Rebalance with outdated TopologyHash {Received} instead of {Current}", msg.TopologyHash, _topologyHash);
-                return;
+                Console.WriteLine($"Got ownerships {msg.TopologyHash} / {_topologyHash}");
             }
 
             Logger.LogDebug("Got ownerships {EventId}, {Count}", _topologyHash, msg.OwnedActivations.Count);
-            _partitionLookup = msg.OwnedActivations;
+
+            foreach (var activation in msg.OwnedActivations)
+            {
+                _partitionLookup.Add(activation.Key, activation.Value);
+            }
+
             _rebalance?.TrySetResult(_topologyHash);
             _rebalance = null;
         }

@@ -89,7 +89,7 @@ namespace Proto.Cluster.Gossip
                 return;
             }
 
-            context.Cluster().MemberList.TrySetTopologyConsensus();
+            context.Cluster().MemberList.TrySetTopologyConsensus(hash);
         }
 
         private Task OnSetGossipStateKey(IContext context, SetGossipStateKey setStateKey)

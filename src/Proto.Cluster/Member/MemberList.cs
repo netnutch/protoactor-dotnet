@@ -32,7 +32,7 @@ namespace Proto.Cluster
         private readonly ActorSystem _system;
         private bool _stopping = false;
         private ImmutableDictionary<string, int> _indexByAddress = ImmutableDictionary<string, int>.Empty;
-        private TaskCompletionSource<bool> _topologyConsensus = new (TaskCreationOptions.RunContinuationsAsynchronously);
+        private TaskCompletionSource<(bool, ulong)> _topologyConsensus = new (TaskCreationOptions.RunContinuationsAsynchronously);
         private ImmutableDictionary<string,MetaMember> _metaMembers = ImmutableDictionary<string, MetaMember>.Empty;
 
        // private Member? _leader;
@@ -73,7 +73,7 @@ namespace Proto.Cluster
         
         public ImmutableHashSet<string> GetMembers() => _activeMembers.Members.Select(m=>m.Id).ToImmutableHashSet();
 
-        public async Task<bool> TopologyConsensus(CancellationToken ct)
+        public async Task<(bool consensus, ulong topologyHash)> TopologyConsensus(CancellationToken ct)
         {
             while (!ct.IsCancellationRequested)
             {
@@ -81,10 +81,10 @@ namespace Proto.Cluster
                 // ReSharper disable once MethodSupportsCancellation
                 await Task.WhenAny(t, Task.Delay(500));
                 if (t.IsCompleted)
-                    return true;
+                    return t.Result;
             }
 
-            return false;
+            return (false, 0);
         }
 
         public Member? GetActivator(string kind, string requestSourceAddress)
@@ -318,10 +318,10 @@ namespace Proto.Cluster
         public Member[] GetAllMembers() => _activeMembers.Members.ToArray();
         public Member[] GetOtherMembers() => _activeMembers.Members.Where(m => m.Id != _system.Id).ToArray();
 
-        internal void TrySetTopologyConsensus()
+        internal void TrySetTopologyConsensus(ulong hash)
         {
             //if not set, set it, if already set, keep it set
-            _topologyConsensus.TrySetResult(true);
+            _topologyConsensus.TrySetResult((true, hash));
         }
 
         public void TryResetTopologyConsensus()
@@ -329,7 +329,7 @@ namespace Proto.Cluster
             //only replace if the task is completed
             if (_topologyConsensus.Task.IsCompleted)
             {
-                _topologyConsensus = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _topologyConsensus = new TaskCompletionSource<(bool, ulong)>(TaskCreationOptions.RunContinuationsAsynchronously);
             }
         }
     }
