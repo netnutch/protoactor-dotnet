@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using OpenTracing;
 using OpenTracing.Propagation;
+using Proto.Mailbox;
 
 namespace Proto.OpenTracing
 {
@@ -67,6 +68,10 @@ namespace Proto.OpenTracing
                 () => base.RequestAsync<T>(target, message, cancellationToken)
             );
 
+        public override void Request(PID target, object message, PID? sender) => OpenTracingMethodsDecorators.Request(target, message, _sendSpanSetup, _tracer, () => base.Request(target, message, sender));
+
+        public override void Respond(object message) => OpenTracingMethodsDecorators.Respond(base.Sender, message, _sendSpanSetup, _tracer, () => base.Respond(message));
+
         public override void Forward(PID target)
             => OpenTracingMethodsDecorators.Forward(target, base.Message, _sendSpanSetup, _tracer, () => base.Forward(target));
 
@@ -80,6 +85,23 @@ namespace Proto.OpenTracing
         public static void Send(PID target, object message, SpanSetup sendSpanSetup, ITracer tracer, Action send)
         {
             using var scope = tracer.BuildStartedScope(tracer.ActiveSpan?.Context, nameof(Send), message, sendSpanSetup);
+
+            try
+            {
+                ProtoTags.TargetPID.Set(scope.Span, target.ToString());
+                send();
+            }
+            catch (Exception ex)
+            {
+                ex.SetupSpan(scope.Span);
+                throw;
+            }
+        }
+        
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void Respond(PID target, object message, SpanSetup sendSpanSetup, ITracer tracer, Action send)
+        {
+            using var scope = tracer.BuildStartedScope(tracer.ActiveSpan?.Context, nameof(Respond), message, sendSpanSetup);
 
             try
             {
@@ -171,6 +193,12 @@ namespace Proto.OpenTracing
         {
             var message = envelope.Message;
 
+            if (message is SystemMessage)
+            {
+                await receive().ConfigureAwait(false);
+                return;
+            }
+            
             var parentSpanCtx = tracer.Extract(BuiltinFormats.TextMap, new TextMapExtractAdapter(envelope.Header.ToDictionary()));
 
             using var scope = tracer.BuildStartedScope(parentSpanCtx, nameof(Receive), message, receiveSpanSetup);

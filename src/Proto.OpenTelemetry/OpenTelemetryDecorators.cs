@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using OpenTelemetry.Trace;
+using Proto.Mailbox;
 
 namespace Proto.OpenTelemetry
 {
@@ -60,6 +61,9 @@ namespace Proto.OpenTelemetry
             };
         }
 
+        public override void Respond(object message)
+            => OpenTelemetryMethodsDecorators.Respond(base.Sender!, message, _sendActivitySetup, () => base.Respond(message));
+
         public override void Send(PID target, object message)
             => OpenTelemetryMethodsDecorators.Send(target, message, _sendActivitySetup, () => base.Send(target, message));
 
@@ -67,6 +71,9 @@ namespace Proto.OpenTelemetry
             => OpenTelemetryMethodsDecorators.RequestAsync(target, message, _sendActivitySetup,
                 () => base.RequestAsync<T>(target, message, cancellationToken)
             );
+
+        public override void Request(PID target, object message, PID? sender)
+            => OpenTelemetryMethodsDecorators.Request(target, message, sender, _sendActivitySetup, () => base.Request(target, message, sender));
 
         public override void Forward(PID target)
             => OpenTelemetryMethodsDecorators.Forward(target, base.Message!, _sendActivitySetup, () => base.Forward(target));
@@ -160,6 +167,25 @@ namespace Proto.OpenTelemetry
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static void Respond(PID target, object message, ActivitySetup sendActivitySetup, Action forward)
+        {
+            using var activity =
+                OpenTelemetryHelpers.BuildStartedActivity(Activity.Current?.Context ?? default, nameof(Respond), message, sendActivitySetup);
+
+            try
+            {
+                activity?.SetTag(ProtoTags.TargetPID, target.ToString());
+                forward();
+            }
+            catch (Exception ex)
+            {
+                activity?.RecordException(ex);
+                activity?.SetStatus(Status.Error);
+                throw;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void Forward(PID target, object message, ActivitySetup sendActivitySetup, Action forward)
         {
             using var activity =
@@ -182,6 +208,12 @@ namespace Proto.OpenTelemetry
         internal static async Task Receive(MessageEnvelope envelope, ActivitySetup receiveActivitySetup, Func<Task> receive)
         {
             var message = envelope.Message;
+            
+            if (message is SystemMessage)
+            {
+                await receive().ConfigureAwait(false);
+                return;
+            }
 
             var propagationContext = envelope.Header.ExtractPropagationContext();
 
