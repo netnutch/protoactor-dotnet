@@ -167,7 +167,6 @@ namespace Proto.Cluster.Tests
             await Task.Delay(1000);
             cts.Cancel();
             await worker;
-            _testOutputHelper.WriteLine(LogStore.ToFormattedString());
         }
 
         private async Task CanGetResponseFromAllIdsOnAllNodes(IEnumerable<string> actorIds, IList<Cluster> nodes, int timeoutMs)

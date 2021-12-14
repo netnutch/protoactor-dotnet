@@ -4,6 +4,7 @@
 // </copyright>
 // -----------------------------------------------------------------------
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
@@ -121,12 +122,13 @@ namespace Proto.Cluster.Partition
         private class PartitionWorker : IActor
         {
             private readonly PID _targetMember;
-            private readonly HashSet<int> _receivedChunks = new();
+            private readonly BitArray _receivedChunks = new(64);
             private readonly List<Activation> _receivedActivations = new();
-            private int? _finalChunk;
             private readonly string _memberAddress;
             private readonly TimeSpan _timeout;
             private readonly TaskCompletionSource<object> _completionSource = new();
+            private int _receivedCount;
+            private int? _finalChunk;
 
             public PartitionWorker(string memberAddress, TimeSpan timeout)
             {
@@ -146,10 +148,10 @@ namespace Proto.Cluster.Partition
                         OnIdentityHandoverResponse(msg, context);
                         break;
                     case ReceiveTimeout:
-                        FailPartition(context, "Timeout");
+                        FailPartition("Timeout");
                         break;
                     case DeadLetterResponse:
-                        FailPartition(context, "DeadLetter");
+                        FailPartition("DeadLetter");
                         break;
                 }
 
@@ -175,7 +177,7 @@ namespace Proto.Cluster.Partition
                 {
                     // Invalid response, requires sender to be populated
                     Logger.LogError("Invalid IdentityHandoverResponse received, missing sender");
-                    FailPartition(context, "MissingSender");
+                    FailPartition("MissingSender");
                 }
 
                 _receivedActivations.AddRange(response.Actors);
@@ -186,25 +188,30 @@ namespace Proto.Cluster.Partition
                 }
             }
 
-            private void FailPartition(IContext context, string reason)
+            private void FailPartition(string reason)
                 => _completionSource.TrySetResult(new PartitionFailed(_memberAddress, reason));
 
             private bool HasReceivedAllChunks(IdentityHandoverResponse response)
             {
-                if (_receivedChunks.Contains(response.ChunkId))
+                while (_receivedChunks.Length <= response.ChunkId)
+                {
+                    _receivedChunks.Length *= 2;
+                }
+                if (_receivedChunks.Get(response.ChunkId))
                 {
                     Logger.LogWarning("Chunk {ChunkId} already received", response.ChunkId);
                     return false;
                 }
 
-                _receivedChunks.Add(response.ChunkId);
+                _receivedChunks.Set(response.ChunkId, true);
+                _receivedCount++;
 
                 if (response.Final)
                 {
                     _finalChunk = response.ChunkId;
                 }
 
-                return _finalChunk.HasValue && _receivedChunks.Count == _finalChunk;
+                return _finalChunk.HasValue && _receivedCount == _finalChunk;
             }
 
             public record PartitionCompleted(string MemberAddress, List<Activation> Activations);
