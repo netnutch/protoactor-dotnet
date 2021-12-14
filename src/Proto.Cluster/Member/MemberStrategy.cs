@@ -22,15 +22,10 @@ namespace Proto.Cluster
 
     class SimpleMemberStrategy : IMemberStrategy
     {
-        private readonly MemberHashRing _rdv;
-        private readonly RoundRobinMemberSelector _rr;
+        private readonly RoundRobinMemberSelector _selector;
         private ImmutableList<Member> _members = ImmutableList<Member>.Empty;
 
-        public SimpleMemberStrategy()
-        {
-            _rdv = new MemberHashRing(ImmutableList<Member>.Empty);
-            _rr = new RoundRobinMemberSelector(this);
-        }
+        public SimpleMemberStrategy() => _selector = new RoundRobinMemberSelector(this);
 
         public ImmutableList<Member> GetAllMembers() => _members;
 
@@ -41,16 +36,11 @@ namespace Proto.Cluster
             if (_members.Any(x => x.Address == member.Address)) return;
 
             _members = _members.Add(member);
-            _rdv.Add(member);
         }
 
         //TODO: account for Member.MemberId
-        public void RemoveMember(Member member)
-        {
-            _members = _members.RemoveAll(x => x.Address == member.Address);
-            _rdv.Remove(member);
-        }
+        public void RemoveMember(Member member) => _members = _members.RemoveAll(x => x.Address == member.Address);
 
-        public Member? GetActivator(string senderAddress) => _rr.GetMember();
+        public Member? GetActivator(string senderAddress) => _selector.GetMember();
     }
 }
