@@ -41,6 +41,9 @@ namespace Proto.Cluster.Tests
 
             _testOutputHelper.WriteLine(LogStore.ToFormattedString());
             timeout.IsCompleted.Should().BeFalse();
+
+            var hashes = consensus.Result.Select(it => it.topologyHash).ToList();
+            hashes.Should().AllBeEquivalentTo(hashes.First());
         }
 
         [Fact]
@@ -164,6 +167,7 @@ namespace Proto.Cluster.Tests
             await Task.Delay(1000);
             cts.Cancel();
             await worker;
+            _testOutputHelper.WriteLine(LogStore.ToFormattedString());
         }
 
         private async Task CanGetResponseFromAllIdsOnAllNodes(IEnumerable<string> actorIds, IList<Cluster> nodes, int timeoutMs)
