@@ -89,7 +89,7 @@ namespace Proto.Cluster.Partition
 
             var chunkId = 1;
             var chunkSize = _config.HandoverChunkSize;
-            var cancelRebalance = new CancellationTokenSource();
+            using var cancelRebalance = new CancellationTokenSource();
             var outOfBandResponseHandler = context.System.Root.Spawn(AbortOnDeadLetter(cancelRebalance));
 
             try
@@ -139,6 +139,10 @@ namespace Proto.Cluster.Partition
             {
                 if (cancelRebalance.IsCancellationRequested)
                 {
+                    if (_config.DeveloperLogging)
+                    {
+                        Console.WriteLine($"Cancelled rebalance handover for topology: {msg.TopologyHash}");
+                    }
                     Logger.LogInformation("Cancelled rebalance: {@IdentityHandoverRequest}", msg);
                 }
 

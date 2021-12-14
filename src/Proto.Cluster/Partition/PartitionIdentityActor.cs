@@ -34,8 +34,9 @@ namespace Proto.Cluster.Partition
         private ulong _topologyHash;
         private readonly TimeSpan _identityHandoverTimeout;
         private readonly PartitionConfig _config;
-        private TaskCompletionSource<ulong>? _rebalance;
-        private PID? _relocationWorker;
+        
+        private TaskCompletionSource<ulong>? _rebalanceTcs;
+        private CancellationTokenSource? _rebalanceCancellation;
 
         public PartitionIdentityActor(Cluster cluster, TimeSpan identityHandoverTimeout, PartitionConfig config)
         {
@@ -65,7 +66,7 @@ namespace Proto.Cluster.Partition
 
         private Task OnClusterTopology(ClusterTopology msg, IContext context)
         {
-            StopInvalidatedTopologyUpdates(msg, context);
+            StopInvalidatedTopologyRebalance(msg);
 
             var topologyHash = msg.TopologyHash;
             _topologyHash = topologyHash;
@@ -80,40 +81,31 @@ namespace Proto.Cluster.Partition
                 return Task.CompletedTask;
             }
 
-            var cts = new CancellationTokenSource(_identityHandoverTimeout);
-            _rebalance ??= new TaskCompletionSource<ulong>();
-            _relocationWorker = context.Spawn(Props.FromProducer(()
-                    => new PartitionIdentityRebalanceWorker((int) (existingActivations * 1.10), _config.RebalanceRequestTimeout, cts.Token)
+            _rebalanceCancellation = new CancellationTokenSource();
+            _rebalanceTcs ??= new TaskCompletionSource<ulong>();
+            var workerPid = context.Spawn(Props.FromProducer(()
+                    => new PartitionIdentityRebalanceWorker((int) (existingActivations * 1.10), _config.RebalanceRequestTimeout, _rebalanceCancellation.Token)
                 )
             );
 
             Logger.LogDebug("Requesting ownerships");
-            var rebalanceTask = context.RequestAsync<PartitionsRebalanced>(_relocationWorker, new IdentityHandoverRequest
+            var rebalanceTask = context.RequestAsync<PartitionsRebalanced>(workerPid, new IdentityHandoverRequest
                 {
                     TopologyHash = _topologyHash,
                     Address = _myAddress,
                     Members = {msg.Members}
-                }, cts.Token
+                }, _rebalanceCancellation.Token
             );
 
-            context.ReenterAfter(rebalanceTask, async task => {
+            context.ReenterAfter(rebalanceTask, task => {
 
                     if (task.IsCompletedSuccessfully)
                     {
-                        Console.WriteLine($"Rebalanced: {msg.TopologyHash} / {_topologyHash}");
-                        await OnPartitionsRebalanced(task.Result, context);
-                    }
-                    else
-                    {
-                        if (topologyHash == _topologyHash) // Current topology failed
-                        {
-                            Console.WriteLine($"Partition Rebalance failed for: {_topologyHash}");
-                            Logger.LogError("Partition Rebalance failed for {TopologyHash}", _topologyHash);
-                            // TODO: retry?
-                        }
+                        return OnPartitionsRebalanced(task.Result, context);
                     }
 
-                    cts.Dispose();
+                    Logger.LogInformation("Partition Rebalance cancelled for {TopologyHash}", _topologyHash);
+                    return Task.CompletedTask;
                 }
             );
 
@@ -131,15 +123,12 @@ namespace Proto.Cluster.Partition
             //     (consensus, topologyHash) = await _cluster.MemberList.TopologyConsensus(CancellationTokens.FromSeconds(5));
             // }
 
-            // if (msg.TopologyHash != topologyHash)
-            // {
-            //     if (_config.DeveloperLogging)
-            //     {
-            //         Console.WriteLine($"{msg.TopologyHash}!={topologyHash}");
-            //     }
-            //     Logger.LogWarning("Rebalance with outdated TopologyHash {Received} instead of {Current}", msg.TopologyHash, _topologyHash);
-            //     return;
-            // }
+            if (msg.TopologyHash != _topologyHash)
+            {
+                Console.WriteLine($"Rebalance with outdated TopologyHash {msg.TopologyHash}!={_topologyHash}");
+                Logger.LogWarning("Rebalance with outdated TopologyHash {Received} instead of {Current}", msg.TopologyHash, _topologyHash);
+                return;
+            }
             if (_config.DeveloperLogging)
             {
                 Console.WriteLine($"Got ownerships {msg.TopologyHash} / {_topologyHash}");
@@ -152,16 +141,18 @@ namespace Proto.Cluster.Partition
                 _partitionLookup.Add(activation.Key, activation.Value);
             }
 
-            _rebalance?.TrySetResult(_topologyHash);
-            _rebalance = null;
+            _rebalanceTcs?.TrySetResult(_topologyHash);
+            _rebalanceTcs = null;
         }
 
-        private void StopInvalidatedTopologyUpdates(ClusterTopology msg, IContext context)
+        private void StopInvalidatedTopologyRebalance(ClusterTopology msg)
         {
-            if (_relocationWorker is not null && _topologyHash != msg.TopologyHash)
+            if (_rebalanceCancellation is not null && _topologyHash != msg.TopologyHash)
             {
-                context.Send(_relocationWorker, new IdentityHandoverCancellation());
-                _relocationWorker = null;
+                Logger.LogDebug("[PartitionIdentityActor] Cancelling handover of {OldTopology}, new topology is {CurrentTopology}", _topologyHash, msg.TopologyHash);
+
+                _rebalanceCancellation.Cancel();
+                _rebalanceCancellation = null;
             }
         }
 
@@ -183,9 +174,19 @@ namespace Proto.Cluster.Partition
         private Task OnActivationRequest(ActivationRequest msg, IContext context)
         {
             // Wait for rebalance in progress
-            if (_rebalance is not null)
+            if (_rebalanceTcs is not null)
             {
-                context.ReenterAfter(_rebalance.Task, _ => OnActivationRequest(msg, context));
+                if (_config.DeveloperLogging)
+                    Console.WriteLine($"Rebalance in progress,  {msg.RequestId}");
+                context.ReenterAfter(_rebalanceTcs.Task, _ => OnActivationRequest(msg, context));
+                return Task.CompletedTask;
+            }
+
+            if (_memberHashRing.Count < 1)
+            {
+                if (_config.DeveloperLogging)
+                    Console.WriteLine($"No active members, waiting for topology {msg.RequestId}");
+                context.ReenterAfter(_cluster.MemberList.TopologyConsensus(CancellationToken.None), _ => OnActivationRequest(msg, context));
                 return Task.CompletedTask;
             }
 
@@ -241,7 +242,6 @@ namespace Proto.Cluster.Partition
 
             //Get activator
             var activatorAddress = _cluster.MemberList.GetActivator(msg.Kind, context.Sender!.Address)?.Address;
-
             if (string.IsNullOrEmpty(activatorAddress))
             {
                 if (_config.DeveloperLogging)
@@ -279,6 +279,7 @@ namespace Proto.Cluster.Partition
                     try
                     {
                         var response = await rst;
+
                         if (_config.DeveloperLogging)
                             Console.Write("R"); //reentered
 

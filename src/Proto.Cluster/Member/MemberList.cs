@@ -49,7 +49,7 @@ namespace Proto.Cluster
 
         private int _nextMemberIndex;
 
-        private TaskCompletionSource<bool> _startedTcs = new();
+        private TaskCompletionSource<bool> _startedTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly object _lock = new ();
         
         public Task Started => _startedTcs.Task;

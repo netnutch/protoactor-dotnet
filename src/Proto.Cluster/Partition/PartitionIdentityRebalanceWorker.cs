@@ -16,9 +16,10 @@ namespace Proto.Cluster.Partition
     /// Used by partitionIdentityActor to update partition lookup on topology changes.
     /// Delegates each member to a separate worker actor which handles chunked transfers and can be retried on a member basis.
     /// </summary>
-    class PartitionIdentityRebalanceWorker : IActor
+    class PartitionIdentityRebalanceWorker : IActor, IDisposable
     {
         private readonly TimeSpan _handoverTimeout;
+        private readonly CancellationToken _cancellationToken;
         private static readonly ILogger Logger = Log.CreateLogger<PartitionIdentityActor>();
 
         private readonly Dictionary<ClusterIdentity, PID> _partitionLookup;
@@ -26,18 +27,19 @@ namespace Proto.Cluster.Partition
         private readonly Dictionary<string, PID> _waitingRequests = new();
         private readonly Stopwatch _timer = new();
         private IdentityHandoverRequest? _request;
+        private CancellationTokenRegistration? _tokenRegistration;
 
         public PartitionIdentityRebalanceWorker(int guesstimatedActivationCount, TimeSpan handoverTimeout, CancellationToken cancellationToken)
         {
             _handoverTimeout = handoverTimeout;
+            _cancellationToken = cancellationToken;
             _partitionLookup = new Dictionary<ClusterIdentity, PID>(guesstimatedActivationCount);
-            _onRelocationComplete = new TaskCompletionSource<bool>(cancellationToken);
+            _onRelocationComplete = new TaskCompletionSource<bool>();
         }
 
         public Task ReceiveAsync(IContext context) => context.Message switch
         {
             IdentityHandoverRequest request             => OnIdentityHandoverRequest(request, context),
-            IdentityHandoverCancellation                => CancelHandover(context),
             PartitionWorker.PartitionCompleted response => OnPartitionCompleted(response, context),
             PartitionWorker.PartitionFailed response    => OnPartitionFailed(response, context),
             _                                           => Task.CompletedTask
@@ -45,9 +47,10 @@ namespace Proto.Cluster.Partition
 
         private Task OnIdentityHandoverRequest(IdentityHandoverRequest request, IContext context)
         {
+            _tokenRegistration = _cancellationToken.Register(() => context.Self.Stop(context.System)
+            );
             _timer.Start();
             _request = request;
-            context.SetReceiveTimeout(_handoverTimeout);
 
             foreach (var member in request.Members)
             {
@@ -60,12 +63,6 @@ namespace Proto.Cluster.Partition
                     context.Self.Stop(context.System);
                 }
             );
-            return Task.CompletedTask;
-        }
-
-        private static Task CancelHandover(IContext context)
-        {
-            context.Stop(context.Self);
             return Task.CompletedTask;
         }
 
@@ -214,5 +211,7 @@ namespace Proto.Cluster.Partition
 
             public record PartitionFailed(string MemberAddress, string Reason);
         }
+
+        public void Dispose() => _tokenRegistration?.Dispose();
     }
 }
