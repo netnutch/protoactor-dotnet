@@ -36,6 +36,7 @@ namespace ClusterExperiment1
         private static readonly object InitLock = new();
         private static TracerProvider? tracerProvider;
 
+#pragma warning disable CS0162
         private static void InitTracing()
         {
             if (!EnableTracing) return;
@@ -53,6 +54,7 @@ namespace ClusterExperiment1
                     .Build();
             }
         }
+#pragma warning restore CS0162
 
         private static ClusterConfig GetClusterConfig(
             IClusterProvider clusterProvider,

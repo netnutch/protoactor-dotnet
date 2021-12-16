@@ -61,7 +61,7 @@ namespace Proto.Cluster.Gossip
             var remoteState = gossipRequest.State;
             var updates = GossipStateManagement.MergeState(_state, remoteState, out var newState);
 
-            if (updates.Any())
+            if (updates.Count > 0)
             {
                 foreach (var update in updates)
                 {
@@ -81,7 +81,7 @@ namespace Proto.Cluster.Gossip
         {
             var allMembers = context.System.Cluster().MemberList.GetMembers();
 
-            var (consensus, hash) = GossipStateManagement.CheckConsensus(context, _state, context.System.Id, allMembers);
+            var (consensus, hash) = GossipStateManagement.CheckTopologyConsensus(context, _state, context.System.Id, allMembers);
 
             if (!consensus)
             {
@@ -90,6 +90,8 @@ namespace Proto.Cluster.Gossip
             }
 
             context.Cluster().MemberList.TrySetTopologyConsensus(hash);
+            
+            
         }
 
         private Task OnSetGossipStateKey(IContext context, SetGossipStateKey setStateKey)

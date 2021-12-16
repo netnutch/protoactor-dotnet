@@ -47,10 +47,12 @@ namespace Proto.Cluster.Tests
             _configure = configure;
             ClusterName = $"test-cluster-{Guid.NewGuid().ToString().Substring(0, 6)}";
 
+#pragma warning disable CS0162
             if (EnableTracing)
             {
                 _tracerProvider = InitOpenTelemetryTracing();
             }
+#pragma warning restore CS0162
         }
 
         private static TracerProvider InitOpenTelemetryTracing() => global::OpenTelemetry.Sdk.CreateTracerProviderBuilder()

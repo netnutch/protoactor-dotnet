@@ -11,9 +11,6 @@ message IdentityHandoverRequest {
   repeated Member members = 3;
 }
 
-// Stops handover in progress, when topology is no longer valid
-message IdentityHandoverCancellation {}
-
 //response message to the above
 message IdentityHandoverResponse {
   repeated Activation actors = 1;
@@ -47,6 +44,7 @@ message ActivationTerminated {
 message ActivationRequest {
   ClusterIdentity cluster_identity = 1;
   string request_id = 2;
+  uint64 topology_hash = 3;
 }
 
 message ProxyActivationRequest {
@@ -57,6 +55,7 @@ message ProxyActivationRequest {
 message ActivationResponse {
   actor.PID pid = 1;
   bool failed = 2;
+  uint64 topology_hash = 3;
 }
 
 message Member {

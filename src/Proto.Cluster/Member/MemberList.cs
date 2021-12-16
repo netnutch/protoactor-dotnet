@@ -51,7 +51,7 @@ namespace Proto.Cluster
 
         private TaskCompletionSource<bool> _startedTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly object _lock = new ();
-        
+
         public Task Started => _startedTcs.Task;
 
         public MemberList(Cluster cluster)
@@ -62,7 +62,7 @@ namespace Proto.Cluster
             _eventStream = _system.EventStream;
             _eventStream.Subscribe<GossipUpdate>(u => {
                     if (u.Key != "topology") return;
-            
+
                     //get banned members from all other member states, and merge that with our own banned set
                     var topology = u.Value.Unpack<ClusterTopology>();
                     var blocked = topology.Blocked.ToArray();
