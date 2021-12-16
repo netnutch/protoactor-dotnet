@@ -24,6 +24,9 @@ namespace Proto.Cluster.Gossip
         private readonly Random _rnd = new();
         private ImmutableDictionary<string, long> _committedOffsets = ImmutableDictionary<string, long>.Empty;
 
+        // lookup from state key -> consensus checks
+        private readonly Dictionary<string, ConsensusCheck> _consensusChecks = new();
+
         public GossipActor(TimeSpan gossipRequestTimeout) => _gossipRequestTimeout = gossipRequestTimeout;
 
         public Task ReceiveAsync(IContext context) => context.Message switch
@@ -32,8 +35,27 @@ namespace Proto.Cluster.Gossip
             GetGossipStateRequest getState => OnGetGossipStateKey(context, getState),
             GossipRequest gossipRequest    => OnGossipRequest(context, gossipRequest),
             SendGossipStateRequest         => OnSendGossipState(context),
+            AddConsensusCheck request      => OnAddConsensusCheck(context, request),
+            RemoveConsensusCheck request   => OnRemoveConsensusCheck(context, request),
             _                              => Task.CompletedTask
         };
+
+        private Task OnAddConsensusCheck(IContext context, AddConsensusCheck msg)
+        {
+            var consensusCheck = msg.Check;
+            _consensusChecks[consensusCheck.Id] = consensusCheck;
+            context.Respond(new ConsensusCommandAck());
+            // Check when adding, if we are already consistent
+            consensusCheck.Check(_state, context.System.Cluster().MemberList.GetMembers());
+            return Task.CompletedTask;
+        }
+
+        private Task OnRemoveConsensusCheck(IContext context, RemoveConsensusCheck request)
+        {
+            _consensusChecks.Remove(request.key);
+            context.Respond(new ConsensusCommandAck());
+            return Task.CompletedTask;
+        }
 
         private Task OnGetGossipStateKey(IContext context, GetGossipStateRequest getState)
         {
@@ -81,6 +103,11 @@ namespace Proto.Cluster.Gossip
         {
             var allMembers = context.System.Cluster().MemberList.GetMembers();
 
+            foreach (var consensusCheck in _consensusChecks.Values)
+            {
+                consensusCheck.Check(_state, allMembers);
+            }
+            
             var (consensus, hash) = GossipStateManagement.CheckTopologyConsensus(context, _state, context.System.Id, allMembers);
 
             if (!consensus)
@@ -90,8 +117,6 @@ namespace Proto.Cluster.Gossip
             }
 
             context.Cluster().MemberList.TrySetTopologyConsensus(hash);
-            
-            
         }
 
         private Task OnSetGossipStateKey(IContext context, SetGossipStateKey setStateKey)
@@ -102,6 +127,7 @@ namespace Proto.Cluster.Gossip
             _localSequenceNo = GossipStateManagement.SetKey(_state, key, message, context.System.Id, _localSequenceNo);
             logger?.LogDebug("Setting state key {Key} - {Value} - {State}", key, message, _state);
             Logger.LogDebug("Setting state key {Key} - {Value} - {State}", key, message, _state);
+
             if (!_state.Members.ContainsKey(context.System.Id))
             {
                 logger?.LogCritical("State corrupt");
@@ -175,6 +201,7 @@ namespace Proto.Cluster.Gossip
         private async Task GossipReenter(IContext context, Task<GossipResponse> task, ImmutableDictionary<string, long> pendingOffsets)
         {
             var logger = context.Logger();
+
             try
             {
                 await task;
@@ -218,5 +245,7 @@ namespace Proto.Cluster.Gossip
                 .Take(fanOutBy)
                 .Select(m => m.member)
                 .ToList();
+
+        internal record ConsensusCheck(string Id, Action<GossipState, ImmutableHashSet<string>> Check);
     }
 }

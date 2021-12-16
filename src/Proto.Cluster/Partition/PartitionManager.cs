@@ -44,7 +44,7 @@ namespace Proto.Cluster.Partition
                         if (e.TopologyHash == eventId) return;
 
                         eventId = e.TopologyHash;
-                        Selector.Update(e.Members.ToArray());
+                        Selector.Update(e.Members.ToArray(), e.TopologyHash);
                     }
                 );
             }
@@ -66,7 +66,7 @@ namespace Proto.Cluster.Partition
 
                         topologyHash = e.TopologyHash;
 
-                        Selector.Update(e.Members.ToArray());
+                        Selector.Update(e.Members.ToArray(), e.TopologyHash);
                         _context.Send(_partitionIdentityActor, e);
                         _context.Send(_partitionPlacementActor, e);
                     }

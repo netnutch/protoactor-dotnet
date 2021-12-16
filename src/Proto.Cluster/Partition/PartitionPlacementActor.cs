@@ -174,7 +174,8 @@ namespace Proto.Cluster.Partition
                     //this identity already exists
                     var response = new ActivationResponse
                     {
-                        Pid = existing
+                        Pid = existing,
+                        TopologyHash = msg.TopologyHash
                     };
                     context.Respond(response);
                 }
@@ -197,7 +198,8 @@ namespace Proto.Cluster.Partition
 
                     var response = new ActivationResponse
                     {
-                        Pid = pid
+                        Pid = pid,
+                        TopologyHash = msg.TopologyHash
                     };
                     context.Respond(response);
                     if (_config.DeveloperLogging)

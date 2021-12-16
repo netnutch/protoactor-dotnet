@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using ClusterTest.Messages;
 using FluentAssertions;
 using Proto.Cluster.Gossip;
+using Proto.Cluster.Partition;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -34,9 +35,9 @@ namespace Proto.Cluster.Tests
         public async Task TopologiesShouldHaveConsensus()
         {
             var timeout = Task.Delay(20000);
-        
+
             var consensus = Task.WhenAll(Members.Select(member => member.MemberList.TopologyConsensus(CancellationTokens.FromSeconds(20))));
-        
+
             await Task.WhenAny(timeout, consensus);
 
             _testOutputHelper.WriteLine(LogStore.ToFormattedString());
@@ -44,6 +45,39 @@ namespace Proto.Cluster.Tests
 
             var hashes = consensus.Result.Select(it => it.topologyHash).ToList();
             hashes.Should().AllBeEquivalentTo(hashes.First());
+
+            await using var topologyConsensus = await Members.First().Gossip
+                .RegisterConsensusCheck<ClusterTopology, ulong>("topology", topology => topology.TopologyHash);
+
+            var (hasConsensus, topologyHash) = await topologyConsensus.GossipConsensus(CancellationTokens.FromSeconds(100));
+
+            hasConsensus.Should().BeTrue();
+            topologyHash.Should().Be(hashes[0]);
+        }
+
+        [Fact]
+        public async Task GossipConsensusWorks()
+        {
+            foreach (var member in Members)
+            {
+                member.SetInFlightActivationsCompleted(999);
+            }
+
+            foreach (var member in Members)
+            {
+                var (consensus, topologyHash) = await member.WaitUntilInFlightActivationsAreCompleted(CancellationTokens.FromSeconds(5));
+                consensus.Should().Be(true);
+                topologyHash.Should().Be(999);
+            }
+
+            var candidate = Members.First();
+
+            candidate.SetInFlightActivationsCompleted(1000);
+            await Task.Delay(1000);
+
+            using var cts = new CancellationTokenSource(200);
+            var result = await Members.Last().WaitUntilInFlightActivationsAreCompleted(cts.Token);
+            result.consensus.Should().BeFalse();
         }
 
         [Fact]
@@ -149,9 +183,9 @@ namespace Proto.Cluster.Tests
             var ingressNodes = new[] {Members[0], Members[1]};
             var victim = Members[2];
             var ids = Enumerable.Range(1, 200).Select(id => id.ToString()).ToList();
-        
+
             var cts = new CancellationTokenSource();
-        
+
             var worker = Task.Run(async () => {
                     while (!cts.IsCancellationRequested)
                     {

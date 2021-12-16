@@ -157,7 +157,7 @@ namespace Proto.Cluster.Gossip
         ) where T : IMessage, new() => CheckConsensus<T, T>(ctx, state, myId, members, valueKey, v => v);
 
         public static (bool Consensus, TV value) CheckConsensus<T, TV>(
-            IContext ctx,
+            IContext? ctx,
             GossipState state,
             string myId,
             ImmutableHashSet<string> members,
@@ -165,7 +165,7 @@ namespace Proto.Cluster.Gossip
             Func<T, TV> extractValue
         ) where T : IMessage, new()
         {
-            var logger = ctx.Logger()?.BeginMethodScope();
+            var logger = ctx?.Logger()?.BeginMethodScope();
 
             try
             {
@@ -225,7 +225,7 @@ namespace Proto.Cluster.Gossip
             }
         }
 
-        private static T? GetMemberStateByKey<T>(this GossipState.Types.GossipMemberState memberState, string key) where T : IMessage, new()
+        internal static T? GetMemberStateByKey<T>(this GossipState.Types.GossipMemberState memberState, string key) where T : IMessage, new()
         {
             if (!memberState.Values.TryGetValue(key, out var entry))
                 return default;

@@ -13,15 +13,20 @@ namespace Proto.Cluster.Partition
     {
         private readonly object _lock = new();
         private MemberHashRing _rdv = new(ImmutableList<Member>.Empty);
+        private ulong _topologyHash;
 
-        public void Update(Member[] members)
+        public void Update(Member[] members, ulong topologyHash)
         {
-            lock (_lock) _rdv = new MemberHashRing(members);
+            lock (_lock)
+            {
+                _rdv = new MemberHashRing(members);
+                _topologyHash = topologyHash;
+            }
         }
 
-        public string GetIdentityOwner(string key)
+        public (string owner, ulong topologyHash) GetIdentityOwner(string key)
         {
-            lock (_lock) return _rdv.GetOwnerMemberByIdentity(key);
+            lock (_lock) return (_rdv.GetOwnerMemberByIdentity(key), _topologyHash);
         }
     }
 }

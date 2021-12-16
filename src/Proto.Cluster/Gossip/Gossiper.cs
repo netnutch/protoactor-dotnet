@@ -5,8 +5,10 @@
 // -----------------------------------------------------------------------
 using System;
 using System.Collections.Immutable;
+using System.Threading;
 using System.Threading.Tasks;
 using Google.Protobuf;
+using Google.Protobuf.Reflection;
 using Google.Protobuf.WellKnownTypes;
 using Microsoft.Extensions.Logging;
 using Proto.Logging;
@@ -14,14 +16,22 @@ using Proto.Logging;
 namespace Proto.Cluster.Gossip
 {
     public record GossipUpdate(string MemberId, string Key, Any Value, long SequenceNumber);
+
     public record GetGossipStateRequest(string Key);
 
-    public record GetGossipStateResponse(ImmutableDictionary<string,Any> State);
+    public record GetGossipStateResponse(ImmutableDictionary<string, Any> State);
 
     public record SetGossipStateKey(string Key, IMessage Value);
 
     public record SendGossipStateRequest;
+
     public record SendGossipStateResponse;
+
+    internal record AddConsensusCheck(GossipActor.ConsensusCheck Check);
+
+    internal record RemoveConsensusCheck(string Id, string key);
+
+    internal record ConsensusCommandAck;
 
     public class Gossiper
     {
@@ -38,7 +48,7 @@ namespace Proto.Cluster.Gossip
             _context = _cluster.System.Root;
         }
 
-        public async Task<ImmutableDictionary<string,T>> GetState<T>(string key) where T : IMessage, new()
+        public async Task<ImmutableDictionary<string, T>> GetState<T>(string key) where T : IMessage, new()
         {
             _context.System.Logger()?.LogDebug("Gossiper getting state from {Pid}", _pid);
 
@@ -51,7 +61,7 @@ namespace Proto.Cluster.Gossip
             {
                 typed = typed.SetItem(k, value.Unpack<T>());
             }
-            
+
             return typed;
         }
 
@@ -59,11 +69,12 @@ namespace Proto.Cluster.Gossip
         {
             Logger.LogDebug("Gossiper setting state to {Pid}", _pid);
             _context.System.Logger()?.LogDebug("Gossiper setting state to {Pid}", _pid);
+
             if (_pid == null)
             {
                 return;
             }
-            
+
             _context.Send(_pid, new SetGossipStateKey(key, value));
         }
 
@@ -80,15 +91,14 @@ namespace Proto.Cluster.Gossip
         {
             Logger.LogInformation("Starting gossip loop");
             await Task.Yield();
-        
+
             while (!_cluster.System.Shutdown.IsCancellationRequested)
             {
                 try
                 {
-                    await Task.Delay((int)_cluster.Config.GossipInterval.TotalMilliseconds);
+                    await Task.Delay((int) _cluster.Config.GossipInterval.TotalMilliseconds);
                     SetState("heartbeat", new MemberHeartbeat());
                     await SendStateAsync();
-                    
                 }
                 catch (Exception x)
                 {
@@ -97,9 +107,38 @@ namespace Proto.Cluster.Gossip
             }
         }
 
+        public Task<IConsensusHandle<T>> RegisterConsensusCheck<T>(string key) where T : IMessage, new()
+            => RegisterConsensusCheck<T, T>(key, state => state);
+
+        public async Task<IConsensusHandle<TV>> RegisterConsensusCheck<T, TV>(string key, Func<T, TV> getValue) where T : IMessage, new()
+        {
+            var id = Guid.NewGuid().ToString("N");
+            var handle = new GossipConsensusHandleHandle<TV>(() => _context.RequestAsync<ConsensusCommandAck>(_pid, new RemoveConsensusCheck(id, key))
+            );
+
+            await _context.RequestAsync<ConsensusCommandAck>(_pid,
+                new AddConsensusCheck(new GossipActor.ConsensusCheck(id, CheckConsensus)), CancellationToken.None
+            );
+
+            return handle;
+
+            void CheckConsensus(GossipState state, ImmutableHashSet<string> members)
+            {
+                var (consensus, value) = GossipStateManagement.CheckConsensus(null, state, _cluster.System.Id, members, key, getValue);
+
+                if (consensus)
+                {
+                    handle.TrySetConsensus(value!);
+                }
+                else
+                {
+                    handle.TryResetConsensus();
+                }
+            }
+        }
+        
         private async Task SendStateAsync()
         {
-            
             // ReSharper disable once ConditionIsAlwaysTrueOrFalse
             if (_pid == null)
             {

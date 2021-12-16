@@ -35,7 +35,7 @@ namespace Proto.Cluster.Partition
         {
             using var cts = new CancellationTokenSource(_getPidTimeout);
             //Get address to node owning this ID
-            var identityOwner = _partitionManager.Selector.GetIdentityOwner(clusterIdentity.Identity);
+            var (identityOwner,topologyHash) = _partitionManager.Selector.GetIdentityOwner(clusterIdentity.Identity);
             Logger.LogDebug("Identity belongs to {Address}", identityOwner);
             if (string.IsNullOrEmpty(identityOwner)) return null;
 
@@ -44,7 +44,8 @@ namespace Proto.Cluster.Partition
             var req = new ActivationRequest
             {
                 RequestId = Guid.NewGuid().ToString("N"),
-                ClusterIdentity = clusterIdentity
+                ClusterIdentity = clusterIdentity,
+                TopologyHash = topologyHash
             };
 
             Logger.LogDebug("Requesting remote PID from {Partition}:{Remote} {@Request}", identityOwner, remotePid, req);

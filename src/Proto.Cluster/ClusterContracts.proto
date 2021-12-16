@@ -58,6 +58,10 @@ message ActivationResponse {
   uint64 topology_hash = 3;
 }
 
+message ReadyForRebalance {
+  uint64 topology_hash = 1;
+}
+
 message Member {
   string host = 1;
   int32 port = 2;
