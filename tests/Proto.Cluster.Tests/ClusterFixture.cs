@@ -32,7 +32,7 @@ namespace Proto.Cluster.Tests
 
     public abstract class ClusterFixture : IAsyncLifetime, IClusterFixture
     {
-        private const bool EnableTracing = true;
+        private const bool EnableTracing = false;
 
         protected readonly string ClusterName;
         private readonly int _clusterSize;

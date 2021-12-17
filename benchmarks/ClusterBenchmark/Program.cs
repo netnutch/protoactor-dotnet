@@ -375,7 +375,7 @@ namespace ClusterExperiment1
                 followers.Add(p);
             }
 
-            await Task.Delay(15000);
+            await Task.Delay(4000);
 
             startClient();
             Console.WriteLine("Client started...");

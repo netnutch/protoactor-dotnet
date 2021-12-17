@@ -81,13 +81,17 @@ namespace Proto.Cluster.Partition
         private Task IdentityHandoverRequest(IContext context, IdentityHandoverRequest msg)
         {
             var count = 0;
-            var response = new IdentityHandoverResponse();
             var requestAddress = context.Sender!.Address;
 
             //use a local selector, which is based on the requesters view of the world
             var memberHashRing = new MemberHashRing(msg.Members);
 
-            var chunkId = 1;
+            var chunk = 0;
+            var response = new IdentityHandoverResponse
+            {
+                ChunkId = ++chunk,
+                TopologyHash = msg.TopologyHash
+            };
             var chunkSize = _config.HandoverChunkSize;
             using var cancelRebalance = new CancellationTokenSource();
             var outOfBandResponseHandler = context.System.Root.Spawn(AbortOnDeadLetter(cancelRebalance));
@@ -117,9 +121,12 @@ namespace Proto.Cluster.Partition
                             return Task.CompletedTask;
                         }
 
-                        response.ChunkId = chunkId++;
                         context.Request(context.Sender, response, outOfBandResponseHandler);
-                        response = new IdentityHandoverResponse();
+                        response = new IdentityHandoverResponse
+                        {
+                            ChunkId = ++chunk,
+                            TopologyHash = msg.TopologyHash
+                        };
                     }
                 }
 
@@ -128,8 +135,10 @@ namespace Proto.Cluster.Partition
                     return Task.CompletedTask;
                 }
 
-                response.ChunkId = chunkId;
                 response.Final = true;
+                Logger.LogDebug("{Id}, Sending final response with {Count} activations, total {Total}, chunk {ChunkId}, {Pid}, Topology {TopologyHash}", context.System.Id, response.Actors.Count, count, chunk,
+                    outOfBandResponseHandler, msg.TopologyHash
+                );
 
                 context.Request(context.Sender, response);
 
@@ -143,6 +152,7 @@ namespace Proto.Cluster.Partition
                     {
                         Console.WriteLine($"Cancelled rebalance handover for topology: {msg.TopologyHash}");
                     }
+
                     Logger.LogInformation("Cancelled rebalance: {@IdentityHandoverRequest}", msg);
                 }
 

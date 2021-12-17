@@ -176,8 +176,8 @@ namespace Proto.Cluster.Partition
                 if (sender is null)
                 {
                     // Invalid response, requires sender to be populated
-                    Logger.LogError("Invalid IdentityHandoverResponse received, missing sender");
-                    FailPartition("MissingSender");
+                    Logger.LogError("Invalid IdentityHandoverResponse chunk {ChunkId} count {Count}, final {Final}, topology {TopologyHash} received, missing sender", response.ChunkId, response.Actors.Count, response.Final, response.TopologyHash);
+                    // FailPartition("MissingSender");
                 }
 
                 _receivedActivations.AddRange(response.Actors);
@@ -188,8 +188,7 @@ namespace Proto.Cluster.Partition
                 }
             }
 
-            private void FailPartition(string reason)
-                => _completionSource.TrySetResult(new PartitionFailed(_memberAddress, reason));
+            private void FailPartition(string reason) => _completionSource.TrySetResult(new PartitionFailed(_memberAddress, reason));
 
             private bool HasReceivedAllChunks(IdentityHandoverResponse response)
             {

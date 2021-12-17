@@ -100,9 +100,22 @@ namespace Proto.Cluster.Partition
                 context.ReenterAfter(_waitForInflightActivations, consensusTask => {
                         _waitForInflightActivations = null;
                         timer.Stop();
-                        Logger.LogDebug("{SystemId} Initiating rebalance: {ConsensusState}, {CurrentTopology} {ConsensusHash} after {Duration}",
-                            _cluster.System.Id, consensusTask.Result.consensus, _topologyHash, consensusTask.Result.topologyHash, timer.Elapsed
-                        );
+                        var allNodesCompletedActivations = consensusTask.Result.consensus;
+
+                        if (allNodesCompletedActivations)
+                        {
+                            Logger.LogDebug("{SystemId} All nodes OK, Initiating rebalance:, {CurrentTopology} {ConsensusHash} after {Duration}",
+                                _cluster.System.Id, _topologyHash, consensusTask.Result.topologyHash, timer.Elapsed
+                            );
+                        }
+                        else
+                        {
+                            Logger.LogError(
+                                "{SystemId} Consensus not reached, Initiating rebalance:, {CurrentTopology} {ConsensusHash} after {Duration}",
+                                _cluster.System.Id, _topologyHash, consensusTask.Result.topologyHash, timer.Elapsed
+                            );
+                        }
+
                         InitRebalance(msg, context, existingActivations);
                         return Task.CompletedTask;
                     }
@@ -313,55 +326,63 @@ namespace Proto.Cluster.Partition
             //Await SpawningProcess
             context.ReenterAfter(
                 res,
-                async rst => {
+                rst => {
                     try
                     {
-                        var response = await rst;
-
-                        if (_config.DeveloperLogging)
-                            Console.Write("R"); //reentered
-
-                        if (_partitionLookup.TryGetValue(msg.ClusterIdentity, out pid))
+                        if (rst.IsCompletedSuccessfully)
                         {
-                            if (_config.DeveloperLogging)
-                                Console.Write("C"); //cached
+                            var response = rst.Result;
 
-                            if (response.Pid is not null && !response.Pid.Equals(pid))
+                            if (_config.DeveloperLogging)
+                                Console.Write("R"); //reentered
+
+                            if (_partitionLookup.TryGetValue(msg.ClusterIdentity, out pid))
                             {
-                                context.Stop(response.Pid); // Stop duplicate activation
+                                if (_config.DeveloperLogging)
+                                    Console.Write("C"); //cached
+
+                                if (response.Pid is not null && !response.Pid.Equals(pid))
+                                {
+                                    context.Stop(response.Pid); // Stop duplicate activation
+                                }
+
+                                _spawns.Remove(msg.ClusterIdentity);
+                                context.Respond(new ActivationResponse {Pid = pid});
+                                return Task.CompletedTask;
                             }
 
-                            _spawns.Remove(msg.ClusterIdentity);
-                            context.Respond(new ActivationResponse {Pid = pid});
-                            return;
+                            if (response?.Pid != null)
+                            {
+                                if (_config.DeveloperLogging)
+                                    Console.Write("A"); //activated
+
+                                if (response.TopologyHash != _topologyHash) // Topology changed between request and response
+                                {
+                                    activatorAddress = _cluster.MemberList.GetActivator(msg.Kind, context.Sender!.Address)?.Address;
+
+                                    if (_myAddress != activatorAddress)
+                                    {
+                                        //TODO: Stop it or handover?
+                                        Logger.LogWarning("Misplaced spawn: {ClusterIdentity}, {Pid}", msg.ClusterIdentity, response.Pid);
+                                    }
+                                }
+
+                                _partitionLookup[msg.ClusterIdentity] = response.Pid;
+                                _spawns.Remove(msg.ClusterIdentity);
+                                context.Respond(response);
+
+                                if (_waitForInflightActivations is not null)
+                                {
+                                    SetReadyToRebalanceIfNoMoreWaitingSpawns();
+                                }
+
+                                return Task.CompletedTask;
+                            }
                         }
 
-                        if (response?.Pid != null)
+                        else
                         {
-                            if (_config.DeveloperLogging)
-                                Console.Write("A"); //activated
-
-                            if (response.TopologyHash != _topologyHash) // Topology changed between request and response
-                            {
-                                activatorAddress = _cluster.MemberList.GetActivator(msg.Kind, context.Sender!.Address)?.Address;
-
-                                if (_myAddress != activatorAddress)
-                                {
-                                    //TODO: Stop it or handover?
-                                    Logger.LogWarning("Misplaced spawn: {ClusterIdentity}, {Pid}", msg.ClusterIdentity, response.Pid);
-                                }
-                            }
-
-                            _partitionLookup[msg.ClusterIdentity] = response.Pid;
-                            _spawns.Remove(msg.ClusterIdentity);
-                            context.Respond(response);
-
-                            if (_waitForInflightActivations is not null)
-                            {
-                                SetReadyToRebalanceIfNoMoreWaitingSpawns();
-                            }
-
-                            return;
+                            Logger.LogError(rst.Exception, "Spawn task failed");
                         }
                     }
                     catch (Exception x)
@@ -373,6 +394,7 @@ namespace Proto.Cluster.Partition
                         Console.Write("F"); //failed
                     _spawns.Remove(msg.ClusterIdentity);
                     context.Respond(new ActivationResponse {Failed = true});
+                    return Task.CompletedTask;
                 }
             );
             return Task.CompletedTask;
