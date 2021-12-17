@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 
 namespace Proto.Cluster.Gossip
 {
-    public interface IConsensusHandle<T> : IAsyncDisposable
+    public interface IConsensusHandle<T> : IDisposable
     {
         Task<(bool consensus, T value)> GossipConsensus(CancellationToken ct);
     }
@@ -18,9 +18,9 @@ namespace Proto.Cluster.Gossip
     {
         private volatile TaskCompletionSource<T> _consensus = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        private readonly Func<Task> _deregister;
+        private readonly Action _deregister;
 
-        public GossipConsensusHandleHandle(Func<Task> deregister) => _deregister = deregister;
+        public GossipConsensusHandleHandle(Action deregister) => _deregister = deregister;
 
         internal void TrySetConsensus(object consensus)
         {
@@ -30,7 +30,7 @@ namespace Proto.Cluster.Gossip
             }
 
             //if not set, set it, if already set, keep it set
-            _consensus.TrySetResult((T)consensus);
+            _consensus.TrySetResult((T) consensus);
         }
 
         internal void TryResetConsensus()
@@ -56,6 +56,6 @@ namespace Proto.Cluster.Gossip
             return (false, default);
         }
 
-        public async ValueTask DisposeAsync() => await _deregister();
+        public void Dispose() => _deregister();
     }
 }

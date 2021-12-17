@@ -5,6 +5,7 @@
 // -----------------------------------------------------------------------
 using System.Threading;
 using System.Threading.Tasks;
+using Proto.Cluster.Gossip;
 
 namespace Proto.Cluster.Partition
 {
@@ -13,12 +14,11 @@ namespace Proto.Cluster.Partition
         private const string HandoverStateKey = "reb:ready";
 
         public static async Task<(bool consensus, ulong topologyHash)> WaitUntilInFlightActivationsAreCompleted(
-            this Cluster cluster,
+            this Gossiper gossip,
             CancellationToken cancellationToken
         )
         {
-            await using var consensusCheck =
-                await cluster.Gossip.RegisterConsensusCheck<ReadyForRebalance, ulong>(
+            using var consensusCheck = gossip.RegisterConsensusCheck<ReadyForRebalance, ulong>(
                     HandoverStateKey,
                     rebalance => rebalance.TopologyHash
                 );
@@ -26,7 +26,7 @@ namespace Proto.Cluster.Partition
             return await consensusCheck.GossipConsensus(cancellationToken);
         }
 
-        public static void SetInFlightActivationsCompleted(this Cluster cluster, ulong topologyHash)
-            => cluster.Gossip.SetState(HandoverStateKey, new ReadyForRebalance {TopologyHash = topologyHash});
+        public static void SetInFlightActivationsCompleted(this Gossiper gossip, ulong topologyHash)
+            => gossip.SetState(HandoverStateKey, new ReadyForRebalance {TopologyHash = topologyHash});
     }
 }

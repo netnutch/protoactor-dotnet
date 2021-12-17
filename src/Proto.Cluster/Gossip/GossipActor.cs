@@ -36,7 +36,7 @@ namespace Proto.Cluster.Gossip
             GossipRequest gossipRequest    => OnGossipRequest(context, gossipRequest),
             SendGossipStateRequest         => OnSendGossipState(context),
             AddConsensusCheck request      => OnAddConsensusCheck(context, request),
-            RemoveConsensusCheck request   => OnRemoveConsensusCheck(context, request),
+            RemoveConsensusCheck request   => OnRemoveConsensusCheck(request),
             _                              => Task.CompletedTask
         };
 
@@ -44,16 +44,14 @@ namespace Proto.Cluster.Gossip
         {
             var consensusCheck = msg.Check;
             _consensusChecks[consensusCheck.Id] = consensusCheck;
-            context.Respond(new ConsensusCommandAck());
             // Check when adding, if we are already consistent
             consensusCheck.Check(_state, context.System.Cluster().MemberList.GetMembers());
             return Task.CompletedTask;
         }
 
-        private Task OnRemoveConsensusCheck(IContext context, RemoveConsensusCheck request)
+        private Task OnRemoveConsensusCheck(RemoveConsensusCheck request)
         {
             _consensusChecks.Remove(request.key);
-            context.Respond(new ConsensusCommandAck());
             return Task.CompletedTask;
         }
 

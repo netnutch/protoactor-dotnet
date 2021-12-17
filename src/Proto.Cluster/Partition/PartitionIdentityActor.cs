@@ -93,19 +93,21 @@ namespace Proto.Cluster.Partition
 
             SetReadyToRebalanceIfNoMoreWaitingSpawns();
 
-            InitRebalance(msg, context, existingActivations);
-            
-            // if (_waitForInflightActivations is null)
-            // {
-            //     var timer = Stopwatch.StartNew();
-            //     _waitForInflightActivations = _cluster.WaitUntilInFlightActivationsAreCompleted(CancellationTokens.FromSeconds(3));
-            //     context.ReenterAfter(_waitForInflightActivations, consensusTask => {
-            //             Console.WriteLine($"Consensus: {consensusTask.Result.consensus}, {consensusTask.Result.topologyHash} after {timer.Elapsed}");
-            //             InitRebalance(msg, context, existingActivations);
-            //             return Task.CompletedTask;
-            //         }
-            //     );
-            // }
+            if (_waitForInflightActivations is null)
+            {
+                var timer = Stopwatch.StartNew();
+                _waitForInflightActivations = _cluster.Gossip.WaitUntilInFlightActivationsAreCompleted(CancellationTokens.FromSeconds(3));
+                context.ReenterAfter(_waitForInflightActivations, consensusTask => {
+                        _waitForInflightActivations = null;
+                        timer.Stop();
+                        Logger.LogDebug("{SystemId} Initiating rebalance: {ConsensusState}, {CurrentTopology} {ConsensusHash} after {Duration}",
+                            _cluster.System.Id, consensusTask.Result.consensus, _topologyHash, consensusTask.Result.topologyHash, timer.Elapsed
+                        );
+                        InitRebalance(msg, context, existingActivations);
+                        return Task.CompletedTask;
+                    }
+                );
+            }
 
             return Task.CompletedTask;
         }
@@ -114,7 +116,7 @@ namespace Proto.Cluster.Partition
         {
             if (_spawns.Count == 0)
             {
-                _cluster.SetInFlightActivationsCompleted(_topologyHash);
+                _cluster.Gossip.SetInFlightActivationsCompleted(_topologyHash);
             }
         }
 
@@ -339,17 +341,16 @@ namespace Proto.Cluster.Partition
                             if (_config.DeveloperLogging)
                                 Console.Write("A"); //activated
 
-                            // if (response.TopologyHash != _topologyHash) // Topology changed between request and response
-                            // {
-                            //     
-                            //     activatorAddress = _cluster.MemberList.GetActivator(msg.Kind, context.Sender!.Address)?.Address;
-                            //
-                            //     if (_myAddress != activatorAddress)
-                            //     {
-                            //         HandleMisplacedIdentity(msg, response, activatorAddress, context);
-                            //         return;
-                            //     }
-                            // }
+                            if (response.TopologyHash != _topologyHash) // Topology changed between request and response
+                            {
+                                activatorAddress = _cluster.MemberList.GetActivator(msg.Kind, context.Sender!.Address)?.Address;
+
+                                if (_myAddress != activatorAddress)
+                                {
+                                    //TODO: Stop it or handover?
+                                    Logger.LogWarning("Misplaced spawn: {ClusterIdentity}, {Pid}", msg.ClusterIdentity, response.Pid);
+                                }
+                            }
 
                             _partitionLookup[msg.ClusterIdentity] = response.Pid;
                             _spawns.Remove(msg.ClusterIdentity);
@@ -359,6 +360,7 @@ namespace Proto.Cluster.Partition
                             {
                                 SetReadyToRebalanceIfNoMoreWaitingSpawns();
                             }
+
                             return;
                         }
                     }

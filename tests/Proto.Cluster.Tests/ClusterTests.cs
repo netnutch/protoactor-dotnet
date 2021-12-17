@@ -46,7 +46,7 @@ namespace Proto.Cluster.Tests
             var hashes = consensus.Result.Select(it => it.topologyHash).ToList();
             hashes.Should().AllBeEquivalentTo(hashes.First());
 
-            await using var topologyConsensus = await Members.First().Gossip
+            using var topologyConsensus = Members.First().Gossip
                 .RegisterConsensusCheck<ClusterTopology, ulong>("topology", topology => topology.TopologyHash);
 
             var (hasConsensus, topologyHash) = await topologyConsensus.GossipConsensus(CancellationTokens.FromSeconds(100));
@@ -60,23 +60,23 @@ namespace Proto.Cluster.Tests
         {
             foreach (var member in Members)
             {
-                member.SetInFlightActivationsCompleted(999);
+                member.Gossip.SetInFlightActivationsCompleted(999);
             }
 
             foreach (var member in Members)
             {
-                var (consensus, topologyHash) = await member.WaitUntilInFlightActivationsAreCompleted(CancellationTokens.FromSeconds(5));
+                var (consensus, topologyHash) = await member.Gossip.WaitUntilInFlightActivationsAreCompleted(CancellationTokens.FromSeconds(5));
                 consensus.Should().Be(true);
                 topologyHash.Should().Be(999);
             }
 
             var candidate = Members.First();
 
-            candidate.SetInFlightActivationsCompleted(1000);
+            candidate.Gossip.SetInFlightActivationsCompleted(1000);
             await Task.Delay(1000);
 
             using var cts = new CancellationTokenSource(200);
-            var result = await Members.Last().WaitUntilInFlightActivationsAreCompleted(cts.Token);
+            var result = await Members.Last().Gossip.WaitUntilInFlightActivationsAreCompleted(cts.Token);
             result.consensus.Should().BeFalse();
         }
 

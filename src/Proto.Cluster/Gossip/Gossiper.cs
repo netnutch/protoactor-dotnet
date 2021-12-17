@@ -31,8 +31,6 @@ namespace Proto.Cluster.Gossip
 
     internal record RemoveConsensusCheck(string Id, string key);
 
-    internal record ConsensusCommandAck;
-
     public class Gossiper
     {
         public const string GossipActorName = "gossip";
@@ -84,6 +82,7 @@ namespace Proto.Cluster.Gossip
             _pid = _context.SpawnNamed(props, GossipActorName);
             Logger.LogInformation("Started Cluster Gossip");
             _ = SafeTask.Run(GossipLoop);
+
             return Task.CompletedTask;
         }
 
@@ -107,18 +106,16 @@ namespace Proto.Cluster.Gossip
             }
         }
 
-        public Task<IConsensusHandle<T>> RegisterConsensusCheck<T>(string key) where T : IMessage, new()
+        public IConsensusHandle<T> RegisterConsensusCheck<T>(string key) where T : IMessage, new()
             => RegisterConsensusCheck<T, T>(key, state => state);
 
-        public async Task<IConsensusHandle<TV>> RegisterConsensusCheck<T, TV>(string key, Func<T, TV> getValue) where T : IMessage, new()
+        public IConsensusHandle<TV> RegisterConsensusCheck<T, TV>(string key, Func<T, TV> getValue) where T : IMessage, new()
         {
             var id = Guid.NewGuid().ToString("N");
-            var handle = new GossipConsensusHandleHandle<TV>(() => _context.RequestAsync<ConsensusCommandAck>(_pid, new RemoveConsensusCheck(id, key))
+            var handle = new GossipConsensusHandleHandle<TV>(() => _context.Send(_pid, new RemoveConsensusCheck(id, key))
             );
 
-            await _context.RequestAsync<ConsensusCommandAck>(_pid,
-                new AddConsensusCheck(new GossipActor.ConsensusCheck(id, CheckConsensus)), CancellationToken.None
-            );
+            _context.Send(_pid, new AddConsensusCheck(new GossipActor.ConsensusCheck(id, CheckConsensus)));
 
             return handle;
 
