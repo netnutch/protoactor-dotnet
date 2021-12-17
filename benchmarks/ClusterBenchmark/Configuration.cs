@@ -144,13 +144,13 @@ namespace ClusterExperiment1
             );
             system.EventStream.Subscribe<ClusterTopology>(e => {
                     Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine($"{system.Id}-ClusterTopology:{e.GetMembershipHashCode()}");
+                    Console.WriteLine($"M:{system.Id}-{system.Address}-ClusterTopology:{e.GetMembershipHashCode()}");
                     Console.ResetColor();
                 }
             );
             system.EventStream.Subscribe<LeaderElected>(e => {
                     Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine($"{system.Id}-Leader:{e.Leader.Id}");
+                    Console.WriteLine($"M:{system.Id}-{system.Address}-Leader:{e.Leader.Id}");
                     Console.ResetColor();
                 }
             );
@@ -165,7 +165,7 @@ namespace ClusterExperiment1
         private static ActorSystemConfig GetMemberActorSystemConfig()
         {
             var config = new ActorSystemConfig()
-                .WithSharedFutures()
+                // .WithSharedFutures()
                 .WithDeadLetterThrottleCount(3)
                 .WithDeadLetterThrottleInterval(TimeSpan.FromSeconds(1))
                 .WithDeadLetterRequestLogging(false)
@@ -185,13 +185,13 @@ namespace ClusterExperiment1
             var system = new ActorSystem(EnableTracing ? config.WithConfigureProps(props => props.WithTracing()) : config);
             system.EventStream.Subscribe<ClusterTopology>(e => {
                     Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine($"{system.Id}-ClusterTopology:{e.GetMembershipHashCode()}");
+                    Console.WriteLine($"C:{system.Id}-{system.Address}-ClusterTopology:{e.GetMembershipHashCode()}");
                     Console.ResetColor();
                 }
             );
             system.EventStream.Subscribe<LeaderElected>(e => {
                     Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine($"{system.Id}-Leader:{e.Leader.Id}");
+                    Console.WriteLine($"C:{system.Id}-{system.Address}-Leader:{e.Leader.Id}");
                     Console.ResetColor();
                 }
             );
